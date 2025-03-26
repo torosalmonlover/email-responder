@@ -3,7 +3,7 @@ import json
 import time
 import requests
 from google.oauth2.credentials import Credentials
-from flask import redirect, url_for, request, make_response
+from flask import redirect, url_for, request, make_response, g
 from googleapiclient.discovery import build
 from dotenv import load_dotenv
 
@@ -25,58 +25,56 @@ def init_Oauth(oauth):
 
     return google
 
-from flask import session
+def init_Gmail(access_token):
+    if not access_token:
+        return f"access token is nowhere to be seen when initializing Gmail api" # No access token, force login
 
-def init_Gmail():
-    # If the service is already in the session, return it
-    if 'gmail_service' in session:
-        return session['gmail_service']
+    # Initialize Gmail API client with the access token
+    credentials = Credentials(token=access_token)
+    service = build("gmail", "v1", credentials=credentials)
 
+    return service
+
+def token_and_Gmail_validation():
     access_token = request.cookies.get("access_token")
     expires_at = request.cookies.get("expires_at")
     refresh_token = request.cookies.get("refresh_token")
 
-    # If no token, force login
     if not access_token or not expires_at:
-        return None
-
-    # Convert expiration time to float for comparison
+        print("error: access token or expiration is not properly assigned")
+        return redirect(url_for("routes.index"))
+    
     expires_at = float(expires_at)
-
-    # If token is expired, refresh it
     if time.time() > expires_at:
         if not refresh_token:
-            return None  # No refresh token, user must log in again
+            print("error: refresh token is not properly assigned")
+            return redirect(url_for("routes.index"))
+        refresh_Gmail_token(refresh_token)
 
-        # Request a new access token using the refresh token
-        token_url = "https://oauth2.googleapis.com/token"
-        data = {
-            "client_id": os.getenv("CLIENT_ID"),
-            "client_secret": os.getenv("CLIENT_SECRET"),
-            "refresh_token": refresh_token,
-            "grant_type": "refresh_token",
-        }
-        response = requests.post(token_url, data=data).json()
-
-        if "access_token" not in response:
-            return None  # Failed to refresh token, force re-login
-
-        # Update tokens
-        new_access_token = response["access_token"]
-        new_expires_at = time.time() + response["expires_in"]
-
-        # Save updated token to cookies
-        response = make_response(redirect(url_for("routes.get_emails")))
-        response.set_cookie("access_token", new_access_token, httponly=True, secure=True)
-        response.set_cookie("expires_at", str(new_expires_at), httponly=True, secure=True)
-
-        access_token = new_access_token
-
-    # Initialize Gmail API client with valid token
-    credentials = Credentials(token=access_token)
-    service = build("gmail", "v1", credentials=credentials)
-
-    # Store the Gmail service in session
-    session['gmail_service'] = service
+    service = init_Gmail(access_token)
 
     return service
+
+def refresh_Gmail_token(refresh_token):
+    token_url = "https://oauth2.googleapis.com/token"
+    data = {
+        "client_id": os.getenv("CLIENT_ID"),
+        "client_secret": os.getenv("CLIENT_SECRET"),
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token",
+    }
+    response = requests.post(token_url, data=data).json()
+
+    if "access_token" not in response:
+        return None  # Return None to indicate failure
+
+    # Get new tokens
+    new_access_token = response["access_token"]
+    new_expires_at = time.time() + response["expires_in"]
+
+    # Update the cookies with the new tokens
+    response = make_response()
+    response.set_cookie("access_token", new_access_token, httponly=True, samesite="Strict", secure=True)
+    response.set_cookie("expires_at", str(new_expires_at), httponly=True, samesite="Strict", secure=True)
+
+    return response

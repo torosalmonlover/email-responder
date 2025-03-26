@@ -1,21 +1,18 @@
 import os
 import json
-from flask import Blueprint, redirect, url_for, request, make_response, current_app
-from authentication import init_Gmail
-from flask_caching import Cache
+from flask import Blueprint, redirect, url_for, request, make_response, current_app, g, session
+from authentication import token_and_Gmail_validation
 from app import cache
 
 routes = Blueprint("routes", __name__)
 
-COOKIE_NAME = "oauth_token"
-
 @routes.route("/")
 def index():
-    try:
-        if request.cookies.get(COOKIE_NAME):
-            return redirect(url_for("routes.profile")) 
-    except Exception as e:
-        print(f"Error checking cookie: {e}")
+    # try:
+    #     if request.cookies.get("access_token"):
+    #         return redirect(url_for("routes.profile")) 
+    # except Exception as e:
+    #     print(f"Error checking cookie: {e}")
 
     return "Welcome to OAuth Email App! <a href='/login'>Login with Google</a>"
 
@@ -36,27 +33,26 @@ def callback():
 
     # Store tokens in cookies
     response = make_response(redirect(url_for("routes.profile")))
-    response.set_cookie("access_token", access_token, httponly=True, secure=True)
-    response.set_cookie("expires_at", str(expires_at), httponly=True, secure=True)
+    response.set_cookie("access_token", access_token, httponly=True) # reduced samesite="Strict", secure=True 
+    response.set_cookie("expires_at", str(expires_at), httponly=True)
+
 
     # Store refresh token only if it's new (some OAuth providers don't return it every time)
     if refresh_token:
-        response.set_cookie("refresh_token", refresh_token, httponly=True, secure=True)
+        response.set_cookie("refresh_token", refresh_token, httponly=True)
 
     return response
 
 @routes.route("/profile")
 def profile():
-    token = request.cookies.get(COOKIE_NAME)
-    if not token:
-        return redirect(url_for("routes.login"))
+    service = token_and_Gmail_validation()
     
-    user = json.loads(token)
-    return f"Logged in as {user['userinfo']['email']}, printing user info here {user}. <a href='/logout'>Logout</a>"
+    user_info = service.users().getProfile(userId="me").execute()
+    return f"Logged in as {user_info['emailAddress']}. <a href='/logout'>Logout</a>"
 
 @routes.route("/logout")
 def logout():
-    response = make_response(redirect("https://accounts.google.com/logout"))
+    response = make_response(redirect("/"))
     response.delete_cookie("access_token")
     response.delete_cookie("expires_at")
     response.delete_cookie("refresh_token")
@@ -65,18 +61,16 @@ def logout():
 @routes.route("/emails")
 @cache.cached(timeout=600)
 def get_emails():
-    service = init_Gmail(COOKIE_NAME)
-    if not service:
-        return redirect(url_for("routes.login"))
+    service = token_and_Gmail_validation()
     
     results = service.users().messages().list(userId="me", labelIds=["INBOX"], q="is:unread").execute()
     messages = results.get("messages", [])
 
-    email_numbers = (
-    "You have no unread emails!" if not messages 
-    else f"You have {len(messages)} unread emails!" if len(messages) < 100 
-    else f"You have {len(messages)} or more unread emails!"
-    )
+    # email_numbers = (
+    # "You have no unread emails!" if not messages 
+    # else f"You have {len(messages)} unread emails!" if len(messages) < 100 
+    # else f"You have {len(messages)} or more unread emails!"
+    # )
 
     email_list = "<h2>Unread Emails</h2><ul>"
     for msg in messages:
@@ -87,9 +81,7 @@ def get_emails():
 
 @routes.route("/emails/<email_id>")
 def view_email(email_id):
-    service = init_Gmail(COOKIE_NAME)
-    if not service:
-        return redirect(url_for("routes.login"))
+    service = token_and_Gmail_validation()
 
     try:
         email = service.users().messages().get(userId="me", id=email_id, format="full").execute()
