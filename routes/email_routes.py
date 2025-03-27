@@ -1,5 +1,6 @@
 import os
 import json
+import base64
 from flask import Blueprint, redirect, url_for, request, make_response, current_app, g, session
 from authentication import token_and_Gmail_validation
 from app import cache
@@ -33,13 +34,13 @@ def callback():
 
     # Store tokens in cookies
     response = make_response(redirect(url_for("routes.profile")))
-    response.set_cookie("access_token", access_token, httponly=True) # reduced samesite="Strict", secure=True 
-    response.set_cookie("expires_at", str(expires_at), httponly=True)
+    response.set_cookie("access_token", access_token, httponly=True, secure=True) # reduced samesite="Strict", secure=True 
+    response.set_cookie("expires_at", str(expires_at), httponly=True, secure=True)
 
 
     # Store refresh token only if it's new (some OAuth providers don't return it every time)
     if refresh_token:
-        response.set_cookie("refresh_token", refresh_token, httponly=True)
+        response.set_cookie("refresh_token", refresh_token, httponly=True, secure=True)
 
     return response
 
@@ -59,7 +60,7 @@ def logout():
     return response
 
 @routes.route("/emails")
-@cache.cached(timeout=600)
+@cache.cached(timeout=300)
 def get_emails():
     service = token_and_Gmail_validation()
     
@@ -80,6 +81,7 @@ def get_emails():
     return email_list
 
 @routes.route("/emails/<email_id>")
+@cache.cached()
 def view_email(email_id):
     service = token_and_Gmail_validation()
 
@@ -96,10 +98,12 @@ def view_email(email_id):
         if "parts" in payload:
             for part in payload["parts"]:
                 if part["mimeType"] == "text/plain":
-                    body = part["body"].get("data", "").replace("\n", "<br>")
+                    body_data = part["body"].get("data", "")
+                    body = base64.urlsafe_b64decode(body_data).decode("utf-8") if body_data else "No Content Available"
                     break
                 elif part["mimeType"] == "text/html":
-                    body = part["body"].get("data", "")
+                    body_data = part["body"].get("data", "")
+                    body = base64.urlsafe_b64decode(body_data).decode("utf-8") if body_data else "No Content Available"
                     break
 
         return f"<h2>{subject}</h2><p>{body}</p><a href='/emails'>Back to Emails</a>"
