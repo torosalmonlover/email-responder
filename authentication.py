@@ -5,6 +5,7 @@ import requests
 from google.oauth2.credentials import Credentials
 from flask import redirect, url_for, request, make_response, g
 from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,14 +21,14 @@ def init_Oauth(oauth):
         access_token_params=None,
         refresh_token_url="https://oauth2.googleapis.com/token",
         server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-        client_kwargs={"scope": "openid email profile https://www.googleapis.com/auth/gmail.readonly"},
+        client_kwargs={"scope": "openid email profile https://mail.google.com/"},
     )
 
     return google
 
 def init_Gmail(access_token):
     if not access_token:
-        return f"access token is nowhere to be seen when initializing Gmail api" # No access token, force login
+        return f"access token is nowhere to be seen when initializing Gmail api"
 
     # Initialize Gmail API client with the access token
     credentials = Credentials(token=access_token)
@@ -39,42 +40,41 @@ def token_and_Gmail_validation():
     access_token = request.cookies.get("access_token")
     expires_at = request.cookies.get("expires_at")
     refresh_token = request.cookies.get("refresh_token")
+    refresh_token_expires_in = request.cookies.get("refresh_token_expires_in")
 
     if not access_token or not expires_at:
         print("error: access token or expiration is not properly assigned")
-        return redirect(url_for("routes.index"))
+        return redirect(url_for("routes.login"))
     
     expires_at = float(expires_at)
+    refresh_token_expires_in = float(refresh_token_expires_in)
     if time.time() > expires_at:
-        if not refresh_token:
-            print("error: refresh token is not properly assigned")
-            return redirect(url_for("routes.index"))
-        refresh_Gmail_token(refresh_token)
+        if not refresh_token or time.time() > refresh_token_expires_in:
+            return redirect(url_for("routes.login"))
+        refresh_Gmail_token(access_token, refresh_token)
 
     service = init_Gmail(access_token)
 
     return service
 
-def refresh_Gmail_token(refresh_token):
-    token_url = "https://oauth2.googleapis.com/token"
-    data = {
-        "client_id": os.getenv("CLIENT_ID"),
-        "client_secret": os.getenv("CLIENT_SECRET"),
-        "refresh_token": refresh_token,
-        "grant_type": "refresh_token",
-    }
-    response = requests.post(token_url, data=data).json()
+def refresh_Gmail_token(access_token, refresh_token):
+    creds = Credentials(
+        token=access_token,
+        refresh_token=refresh_token,
+        client_id=os.getenv("CLIENT_ID"),
+        client_secret=os.getenv("CLIENT_SECRET"),
+        token_uri="https://oauth2.googleapis.com/token",
+    )
+    creds.refresh(Request())
 
-    if "access_token" not in response:
-        return None  # Return None to indicate failure
+    new_access_token = creds.token
+    new_expires_at = creds.expiry
 
-    # Get new tokens
-    new_access_token = response["access_token"]
-    new_expires_at = time.time() + response["expires_in"]
+    print(f"New Access Token: {new_access_token}")
+    print(f"New Expires At: {new_expires_at}")
 
-    # Update the cookies with the new tokens
     response = make_response()
-    response.set_cookie("access_token", new_access_token, httponly=True, samesite="Strict", secure=True)
-    response.set_cookie("expires_at", str(new_expires_at), httponly=True, samesite="Strict", secure=True)
+    response.set_cookie("access_token", new_access_token, httponly=True, secure=True)
+    response.set_cookie("expires_at", str(new_expires_at), httponly=True, secure=True)
 
     return response

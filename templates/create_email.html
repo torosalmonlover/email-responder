@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Email Sender</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 400px;
+      margin: 50px auto;
+    }
+    label {
+      display: block;
+      margin-top: 15px;
+    }
+    input, button {
+      width: 100%;
+      padding: 8px;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>Send Email</h2>
+
+  <label for="to">To:</label>
+  <input type="text" id="to" name="to">
+
+  <label for="from">From:</label>
+  <input type="text" id="from" name="from">
+
+  <label for="subject">Subject:</label>
+  <input type="text" id="subject" name="subject">
+
+  <label for="message_text">message:</label>
+  <input type="text" id="message_text" name="message_text">
+
+  <button onclick="sendEmail()">Send</button>
+
+  <p id="response" style="margin-top: 20px;"></p>
+
+  <script>
+    function sendEmail() {
+      const data = {
+        to: document.getElementById("to").value,
+        from: document.getElementById("from").value,
+        subject: document.getElementById("subject").value,
+        message_text: document.getElementById("message_text").value,
+      };
+
+      fetch("/create_email", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(data)
+      })
+      .then(res => res.json())
+      .then(response => {
+        document.getElementById("response").textContent = response.message;
+      })
+      .catch(error => {
+        document.getElementById("response").textContent = "Error sending email.";
+        console.error("Error:", error);
+      });
+    }
+  </script>
+
+</body>
+</html>
